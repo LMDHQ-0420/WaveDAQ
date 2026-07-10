@@ -7,10 +7,7 @@ a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('logo.png', '.'),
-        ('UI.png', '.'),
-    ],
+    datas=[],
     hiddenimports=[
         'PySide6.QtSvg',
         'PySide6.QtXml',
