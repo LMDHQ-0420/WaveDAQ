@@ -8,3 +8,4 @@ dist/
 build/
 logo.icns
 logo.ico
+*.spec
