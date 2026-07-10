@@ -11,11 +11,8 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
       - name: Create GitHub Release
-        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           name: WaveDAQ ${{ github.ref_name }}
@@ -35,7 +32,20 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pillow
+
+      - name: Generate icns icon
+        run: |
+          python - <<'EOF'
+          from PIL import Image
+          import os, subprocess
+          img = Image.open('logo.png').convert('RGBA')
+          os.makedirs('/tmp/WaveDAQ.iconset', exist_ok=True)
+          for s in [16,32,64,128,256,512,1024]:
+              img.resize((s,s)).save(f'/tmp/WaveDAQ.iconset/icon_{s}x{s}.png')
+              img.resize((s*2,s*2)).save(f'/tmp/WaveDAQ.iconset/icon_{s}x{s}@2x.png')
+          subprocess.run(['iconutil','-c','icns','/tmp/WaveDAQ.iconset','-o','logo.icns'],check=True)
+          EOF
 
       - name: Build with PyInstaller
         run: pyinstaller WaveDAQ.spec
@@ -47,7 +57,7 @@ jobs:
         run: |
           create-dmg \
             --volname "WaveDAQ" \
-            --volicon "logo.png" \
+            --volicon "logo.icns" \
             --window-pos 200 120 \
             --window-size 600 400 \
             --icon-size 100 \
@@ -75,7 +85,15 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pillow
+
+      - name: Generate ico icon
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('logo.png').convert('RGBA')
+          img.resize((256,256)).save('logo.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
+          "
 
       - name: Build with PyInstaller
         run: pyinstaller WaveDAQ.spec

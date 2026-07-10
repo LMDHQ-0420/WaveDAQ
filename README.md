@@ -37,15 +37,12 @@
 
 ## 下载
 
-### macOS
+前往 [Releases](https://github.com/LMDHQ-0420/WaveDAQ/releases/latest) 下载对应平台的安装包：
 
-前往 [Releases](https://github.com/LMDHQ-0420/WaveDAQ/releases/latest) 下载 `WaveDAQ-mac.dmg`。
-
-> 首次运行时，macOS 会提示"无法验证开发者"。右键点击应用 → **打开** → 确认即可。
-
-### Windows
-
-前往 [Releases](https://github.com/LMDHQ-0420/WaveDAQ/releases/latest) 下载 `WaveDAQ-windows.exe`，双击运行，无需安装。
+| 平台 | 文件 | 说明 |
+|------|------|------|
+| macOS | `WaveDAQ-mac-vX.X.X.dmg` | 打开 DMG，将 WaveDAQ.app 拖入 Applications。首次运行右键点击 → **打开** 绕过 Gatekeeper |
+| Windows | `WaveDAQ-windows-vX.X.X.exe` | 双击直接运行，无需安装。杀毒软件如有拦截请选择"允许运行" |
 
 ---
 

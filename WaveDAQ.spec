@@ -20,46 +20,61 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='WaveDAQ',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon='logo.png',
-    onefile=True,
-)
+_icon = 'logo.icns' if sys.platform == 'darwin' else 'logo.ico'
 
-# macOS .app bundle
 if sys.platform == 'darwin':
-    app = BUNDLE(
+    # macOS: onedir + BUNDLE → proper .app
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='WaveDAQ',
+        debug=False,
+        strip=False,
+        upx=True,
+        console=False,
+        icon=_icon,
+    )
+    coll = COLLECT(
         exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=True,
+        name='WaveDAQ',
+    )
+    app = BUNDLE(
+        coll,
         name='WaveDAQ.app',
-        icon='logo.png',
+        icon='logo.icns',
         bundle_identifier='com.lmdhq.wavedaq',
         info_plist={
             'NSHighResolutionCapable': True,
             'CFBundleShortVersionString': '1.0.0',
         },
+    )
+else:
+    # Windows: single-file exe
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='WaveDAQ',
+        debug=False,
+        strip=False,
+        upx=True,
+        console=False,
+        icon=_icon,
+        onefile=True,
     )
