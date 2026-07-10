@@ -39,13 +39,13 @@
 
 ### macOS
 
-前往 [Releases](https://github.com/LMDHQ-0420/WaveDAQ/releases/latest) 下载 `WaveDAQ-mac-vX.X.X.dmg`。
+前往 [Releases](https://github.com/LMDHQ-0420/WaveDAQ/releases/latest) 下载 `WaveDAQ-mac.dmg`。
 
 > 首次运行时，macOS 会提示"无法验证开发者"。右键点击应用 → **打开** → 确认即可。
 
 ### Windows
 
-前往 [Releases](https://github.com/LMDHQ-0420/WaveDAQ/releases/latest) 下载 `WaveDAQ-windows-vX.X.X.exe`，双击运行，无需安装。
+前往 [Releases](https://github.com/LMDHQ-0420/WaveDAQ/releases/latest) 下载 `WaveDAQ-windows.exe`，双击运行，无需安装。
 
 ---
 
@@ -74,7 +74,7 @@ python run.py
 通过 UDP 8080 端口接收数据，帧格式如下：
 
 ```
-| 帧头 4B     | 自定义头 8B | Payload          | 帧尾 4B     |
+| 帧头 4B     | 自定义头 8B | Payload         | 帧尾 4B     |
 | 5A5A5A5A   | 00...00    | 8通道 × 128点    | 0D0A0D0A   |
 ```
 
@@ -92,7 +92,7 @@ WaveDAQ/
 ├── requirements.txt
 ├── WaveDAQ.spec                  # PyInstaller 打包配置
 ├── test_udp_sender.py            # UDP 测试数据发送器
-├── .github/workflows/build.yml  # 自动打包 CI
+├── .github/workflows/build.yml   # 自动打包 CI
 └── core/
     ├── acquisition/
     │   ├── data_manager.py       # 采集状态管理（预分配缓冲区）
@@ -121,7 +121,7 @@ pip install pyinstaller
 pyinstaller WaveDAQ.spec
 # 产物：dist/WaveDAQ.app
 
-# Windows（需在 Windows 上运行）
+# Windows
 pyinstaller WaveDAQ.spec
 # 产物：dist/WaveDAQ.exe
 ```
