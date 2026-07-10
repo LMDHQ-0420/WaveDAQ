@@ -9,7 +9,21 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WaveDAQ ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+
   build-mac:
+    needs: create-release
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -43,12 +57,13 @@ jobs:
             "WaveDAQ-mac-${{ github.ref_name }}.dmg" \
             "dist/WaveDAQ.app"
 
-      - name: Upload to Release
+      - name: Upload DMG to Release
         uses: softprops/action-gh-release@v2
         with:
           files: WaveDAQ-mac-${{ github.ref_name }}.dmg
 
   build-windows:
+    needs: create-release
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -68,7 +83,7 @@ jobs:
       - name: Rename executable
         run: mv dist/WaveDAQ.exe WaveDAQ-windows-${{ github.ref_name }}.exe
 
-      - name: Upload to Release
+      - name: Upload EXE to Release
         uses: softprops/action-gh-release@v2
         with:
           files: WaveDAQ-windows-${{ github.ref_name }}.exe
