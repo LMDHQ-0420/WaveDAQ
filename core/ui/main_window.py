@@ -30,6 +30,13 @@ class WavePlotter(QtWidgets.QWidget):
             '#FF7F50', '#8A2BE2', '#00CED1', '#FFD700',
             '#FF69B4', '#00FF7F', '#1E90FF', '#FF8C00',
         ]
+        self.bg_color = None          # None = pyqtgraph default
+        self.channel_order = list(range(8))
+        self.solo_channels = []
+        self.show_combined = True
+        self.show_filter = True
+        self.solo_plot_widgets = {}   # ch_idx -> PlotWidget
+        self.solo_curves_map = {}     # ch_idx -> PlotCurveItem
 
         self._build_ui()
         self._init_plot_controller()
@@ -76,23 +83,13 @@ class WavePlotter(QtWidgets.QWidget):
         left.addWidget(scroll, 1)
 
         channel_grid = QtWidgets.QGridLayout()
-        self.color_buttons = []
         self.checkboxes = []
         for i in range(8):
-            row = QtWidgets.QHBoxLayout()
-            btn = QtWidgets.QPushButton("")
-            btn.setFixedSize(24, 24)
-            btn.setStyleSheet(
-                f"background-color:{pg.mkColor(self.default_colors[i]).name()}; border:1px solid gray;")
-            btn.clicked.connect(lambda _, idx=i: self._change_curve_color(idx))
-            row.addWidget(btn)
-            self.color_buttons.append(btn)
             cb = QtWidgets.QCheckBox(f'通道{i+1}')
             cb.setChecked(True)
             cb.stateChanged.connect(self._update_visibility)
-            row.addWidget(cb)
             self.checkboxes.append(cb)
-            channel_grid.addLayout(row, i // 2, i % 2)
+            channel_grid.addWidget(cb, i // 2, i % 2)
         left.addLayout(channel_grid)
 
         bottom_btns = QtWidgets.QHBoxLayout()
@@ -107,20 +104,22 @@ class WavePlotter(QtWidgets.QWidget):
         main_layout.addLayout(left, stretch=0)
 
         # --- Right plot area ---
-        plot_layout = QtWidgets.QVBoxLayout()
+        self.plot_layout = QtWidgets.QVBoxLayout()
 
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setMouseEnabled(x=True, y=False)
         self.plot_widget.hideButtons()
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        plot_layout.addWidget(self.plot_widget, stretch=1)
+        self.plot_widget.setLabel('left', '原始')
+        self.plot_layout.addWidget(self.plot_widget, stretch=1)
 
         self.filtered_plot = pg.PlotWidget()
         self.filtered_plot.setMouseEnabled(x=True, y=False)
         self.filtered_plot.hideButtons()
         self.filtered_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.filtered_plot.setLabel('left', '滤波')
         self.filtered_plot.setVisible(False)
-        plot_layout.addWidget(self.filtered_plot, stretch=1)
+        self.plot_layout.addWidget(self.filtered_plot, stretch=1)
 
         overview_row = QtWidgets.QHBoxLayout()
         self.overview_plot = pg.PlotWidget()
@@ -135,27 +134,19 @@ class WavePlotter(QtWidgets.QWidget):
         self.reset_button.setFixedWidth(50)
         self.reset_button.clicked.connect(self._reset_zoom)
         ctrl_col.addWidget(self.reset_button)
-        self.bg_color_button = QtWidgets.QPushButton("背景")
-        self.bg_color_button.setFixedWidth(50)
-        self.bg_color_button.clicked.connect(self._change_background_color)
-        ctrl_col.addWidget(self.bg_color_button)
         self.clear_all_button = QtWidgets.QPushButton("清除")
         self.clear_all_button.setFixedWidth(50)
         self.clear_all_button.setStyleSheet(
             "QPushButton{background:#dc3545;color:white;border:none;padding:3px;border-radius:5px;}")
         self.clear_all_button.clicked.connect(self._clear_all_data)
         ctrl_col.addWidget(self.clear_all_button)
-        self.guide_button = QtWidgets.QPushButton("指南")
-        self.guide_button.setFixedWidth(50)
-        self.guide_button.clicked.connect(self._open_guide_dialog)
-        ctrl_col.addWidget(self.guide_button)
         overview_row.addLayout(ctrl_col)
-        plot_layout.addLayout(overview_row, stretch=1)
+        self.plot_layout.addLayout(overview_row, stretch=1)
 
         self.status_label = QtWidgets.QLabel("无采集数据。")
-        plot_layout.addWidget(self.status_label)
+        self.plot_layout.addWidget(self.status_label)
 
-        main_layout.addLayout(plot_layout, stretch=1)
+        main_layout.addLayout(self.plot_layout, stretch=1)
 
     def _init_plot_controller(self):
         self.curves = []
@@ -357,20 +348,12 @@ class WavePlotter(QtWidgets.QWidget):
             self.curves[i].setVisible(cb.isChecked())
             self.overview_curves[i].setVisible(cb.isChecked())
 
-    def _change_curve_color(self, idx):
-        color = QtWidgets.QColorDialog.getColor()
-        if color.isValid():
-            pen = pg.mkPen(color=color, width=1)
-            self.curves[idx].setPen(pen)
-            self.overview_curves[idx].setPen(pen)
-            self.color_buttons[idx].setStyleSheet(
-                f"background-color:{color.name()}; border:1px solid gray;")
-
-    def _change_background_color(self):
-        color = QtWidgets.QColorDialog.getColor()
-        if color.isValid():
-            self.plot_widget.setBackground(color)
-            self.overview_plot.setBackground(color)
+    def _apply_background(self, color):
+        self.bg_color = color
+        for pw in [self.plot_widget, self.overview_plot, self.filtered_plot]:
+            pw.setBackground(color)
+        for pw in self.solo_plot_widgets.values():
+            pw.setBackground(color)
 
     # ------------------------------------------------------------------ #
     # Clear all                                                             #
@@ -431,10 +414,18 @@ class WavePlotter(QtWidgets.QWidget):
     def _open_defaults_dialog(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("默认设置")
-        dlg.setMinimumWidth(420)
+        dlg.setMinimumSize(520, 480)
         v = QtWidgets.QVBoxLayout(dlg)
 
-        v.addWidget(QtWidgets.QLabel("默认保存路径:"))
+        tabs = QtWidgets.QTabWidget()
+        v.addWidget(tabs)
+
+        # ── Tab 1: 导出设置 ──────────────────────────────────────────────
+        tab_export = QtWidgets.QWidget()
+        te = QtWidgets.QVBoxLayout(tab_export)
+        te.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+
+        te.addWidget(QtWidgets.QLabel("默认保存路径:"))
         path_row = QtWidgets.QHBoxLayout()
         path_edit = QtWidgets.QLineEdit(self.save_dir or "")
         browse_btn = QtWidgets.QPushButton("浏览")
@@ -448,11 +439,11 @@ class WavePlotter(QtWidgets.QWidget):
         browse_btn.clicked.connect(on_browse)
         path_row.addWidget(path_edit)
         path_row.addWidget(browse_btn)
-        v.addLayout(path_row)
+        te.addLayout(path_row)
 
-        v.addWidget(QtWidgets.QLabel("默认文件名:"))
+        te.addWidget(QtWidgets.QLabel("默认文件名:"))
         name_edit = QtWidgets.QLineEdit(self.default_filename or "")
-        v.addWidget(name_edit)
+        te.addWidget(name_edit)
 
         opts = QtWidgets.QHBoxLayout()
         chk_date = QtWidgets.QCheckBox("追加采集日期")
@@ -462,8 +453,159 @@ class WavePlotter(QtWidgets.QWidget):
         opts.addWidget(chk_date)
         opts.addWidget(chk_time)
         opts.addStretch()
-        v.addLayout(opts)
+        te.addLayout(opts)
+        tabs.addTab(tab_export, "导出设置")
 
+        # ── Tab 2: 通道设置（颜色 + 单独显示）────────────────────────────
+        tab_channels = QtWidgets.QWidget()
+        tc_root = QtWidgets.QVBoxLayout(tab_channels)
+
+        # Working copies of colors (hex strings)
+        tmp_colors = list(self.default_colors)
+        tmp_bg = [self.bg_color]   # mutable container
+
+        # Top: colors + background in a horizontal split
+        top_row = QtWidgets.QHBoxLayout()
+
+        color_col = QtWidgets.QVBoxLayout()
+        color_col.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        color_col.addWidget(QtWidgets.QLabel("通道颜色:"))
+        color_grid = QtWidgets.QGridLayout()
+        color_btns = []
+        for i in range(8):
+            btn = QtWidgets.QPushButton(f"通道{i+1}")
+            btn.setStyleSheet(
+                f"background-color:{pg.mkColor(tmp_colors[i]).name()};"
+                "color:white; border:1px solid gray; padding:4px;")
+
+            def _on_ch_color(_, idx=i):
+                c = QtWidgets.QColorDialog.getColor(
+                    pg.mkColor(tmp_colors[idx]), dlg)
+                if c.isValid():
+                    tmp_colors[idx] = c.name()
+                    color_btns[idx].setStyleSheet(
+                        f"background-color:{c.name()};"
+                        "color:white; border:1px solid gray; padding:4px;")
+
+            btn.clicked.connect(_on_ch_color)
+            color_btns.append(btn)
+            color_grid.addWidget(btn, i // 2, i % 2)
+        color_col.addLayout(color_grid)
+
+        color_col.addSpacing(6)
+        color_col.addWidget(QtWidgets.QLabel("背景色:"))
+        bg_btn = QtWidgets.QPushButton("选择背景色…")
+        cur_bg_name = pg.mkColor(self.bg_color).name() if self.bg_color else "#000000"
+        bg_btn.setStyleSheet(
+            f"background-color:{cur_bg_name}; color:white; border:1px solid gray; padding:4px;")
+
+        def _on_bg_color():
+            init = pg.mkColor(tmp_bg[0]) if tmp_bg[0] else QtWidgets.QColorDialog.customColor(0)
+            c = QtWidgets.QColorDialog.getColor(init, dlg)
+            if c.isValid():
+                tmp_bg[0] = c.name()
+                bg_btn.setStyleSheet(
+                    f"background-color:{c.name()}; color:white; border:1px solid gray; padding:4px;")
+
+        bg_btn.clicked.connect(_on_bg_color)
+        color_col.addWidget(bg_btn)
+        top_row.addLayout(color_col)
+
+        vsep = QtWidgets.QFrame()
+        vsep.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        top_row.addWidget(vsep)
+
+        # Right of top_row: order list + solo checkboxes
+        display_col = QtWidgets.QVBoxLayout()
+        display_col.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        display_col.addWidget(QtWidgets.QLabel("显示顺序（上→下）:"))
+        order_list = QtWidgets.QListWidget()
+        order_list.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
+        order_list.setMaximumHeight(140)
+        for ch in self.channel_order:
+            order_list.addItem(f"通道{ch+1}")
+        display_col.addWidget(order_list)
+
+        arrow_row = QtWidgets.QHBoxLayout()
+        up_btn = QtWidgets.QPushButton("↑ 上移")
+        dn_btn = QtWidgets.QPushButton("↓ 下移")
+
+        def _move_up():
+            r = order_list.currentRow()
+            if r > 0:
+                item = order_list.takeItem(r)
+                order_list.insertItem(r - 1, item)
+                order_list.setCurrentRow(r - 1)
+
+        def _move_dn():
+            r = order_list.currentRow()
+            if r < order_list.count() - 1:
+                item = order_list.takeItem(r)
+                order_list.insertItem(r + 1, item)
+                order_list.setCurrentRow(r + 1)
+
+        up_btn.clicked.connect(_move_up)
+        dn_btn.clicked.connect(_move_dn)
+        arrow_row.addWidget(up_btn)
+        arrow_row.addWidget(dn_btn)
+        display_col.addLayout(arrow_row)
+
+        display_col.addSpacing(6)
+        display_col.addWidget(QtWidgets.QLabel("单独显示:"))
+        solo_checks = {}
+        for ch in range(8):
+            cb = QtWidgets.QCheckBox(f"通道{ch+1} 单独显示")
+            cb.setChecked(ch in self.solo_channels)
+            solo_checks[ch] = cb
+            display_col.addWidget(cb)
+
+        top_row.addLayout(display_col)
+        tc_root.addLayout(top_row)
+
+        # Bottom: visibility toggles
+        sep = QtWidgets.QFrame()
+        sep.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+        tc_root.addWidget(sep)
+
+        chk_hide_combined = QtWidgets.QCheckBox("隐藏合并波形图")
+        chk_hide_combined.setChecked(not self.show_combined)
+        tc_root.addWidget(chk_hide_combined)
+
+        chk_hide_filter = QtWidgets.QCheckBox("隐藏滤波图")
+        chk_hide_filter.setChecked(not self.show_filter)
+        tc_root.addWidget(chk_hide_filter)
+        tabs.addTab(tab_channels, "通道设置")
+
+        # ── Tab 3: 使用指南 ──────────────────────────────────────────────
+        tab_guide = QtWidgets.QWidget()
+        tg = QtWidgets.QVBoxLayout(tab_guide)
+        guide_text = QtWidgets.QTextEdit()
+        guide_text.setReadOnly(True)
+        guide_text.setHtml("""
+        <h2>使用指南（快速操作）</h2>
+        <p>本界面用于实时/回放查看 8 通道采集数据，并能对波形做简单的幅值阈值滤波、导出与管理。</p>
+        <h3>采集控制</h3>
+        <ul>
+            <li>点击 <strong>▶ 开始</strong> 开始实时采集，点击 <strong>■ 结束</strong> 停止并保存。</li>
+            <li>在记录列表点击 <em>查看</em> 可切换到回放模式。</li>
+            <li>点击 <em>滤波设置</em> 可启用阈值滤波：保留满足 <code>low ≤ |x| ≤ high</code> 的样点。</li>
+        </ul>
+        <h3>波形图说明</h3>
+        <ul>
+            <li>为保证流畅，程序对 overview 做下采样显示（不改变原始数据）。</li>
+            <li>鼠标左键拖动波形图可平移；底部 overview 拖动黄色边框调整主图区间。</li>
+            <li>左侧通道复选框控制显示；默认设置中可修改曲线颜色。</li>
+        </ul>
+        <h3>导出与清理</h3>
+        <ul>
+            <li>导出时可选 <strong>导出原始</strong> 或 <strong>导出滤波结果</strong>（需先启用滤波）。</li>
+            <li>"清除" 删除所有记录并释放内存，操作需确认。</li>
+        </ul>
+        """)
+        tg.addWidget(guide_text)
+        tabs.addTab(tab_guide, "使用指南")
+
+        # ── Dialog buttons ────────────────────────────────────────────────
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         btns.accepted.connect(dlg.accept)
@@ -472,6 +614,8 @@ class WavePlotter(QtWidgets.QWidget):
 
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
+
+        # Apply Tab 1
         new_dir = path_edit.text().strip()
         if new_dir:
             self.save_dir = new_dir
@@ -480,6 +624,67 @@ class WavePlotter(QtWidgets.QWidget):
             self.default_filename = new_name
         self.append_date = chk_date.isChecked()
         self.append_time = chk_time.isChecked()
+
+        # Apply Tab 2 — colors
+        self.default_colors = tmp_colors
+        for i in range(8):
+            pen_main = pg.mkPen(color=self.default_colors[i], width=1)
+            pen_ov   = pg.mkPen(color=self.default_colors[i], width=0.8)
+            pen_filt = pg.mkPen(color=self.default_colors[i], width=1,
+                                style=QtCore.Qt.PenStyle.DashLine)
+            self.curves[i].setPen(pen_main)
+            self.overview_curves[i].setPen(pen_ov)
+            self.filtered_curves[i].setPen(pen_filt)
+        if tmp_bg[0]:
+            self._apply_background(tmp_bg[0])
+
+        # Apply Tab 3 — channel display
+        new_order = []
+        for i in range(order_list.count()):
+            label = order_list.item(i).text()   # e.g. "通道3"
+            ch = int(label.replace("通道", "")) - 1
+            new_order.append(ch)
+        self.channel_order = new_order
+        self.solo_channels = [ch for ch in range(8) if solo_checks[ch].isChecked()]
+        self.show_combined = not chk_hide_combined.isChecked()
+        self.show_filter   = not chk_hide_filter.isChecked()
+        self._rebuild_solo_plots()
+        self.plot_widget.setVisible(self.show_combined)
+        self.filtered_plot.setVisible(self.pc.threshold_enabled and self.show_filter)
+
+    def _rebuild_solo_plots(self):
+        # Remove existing solo widgets from layout
+        for pw in self.solo_plot_widgets.values():
+            self.plot_layout.removeWidget(pw)
+            pw.setParent(None)
+            pw.deleteLater()
+        self.solo_plot_widgets = {}
+        self.solo_curves_map = {}
+
+        # Insert new solo plots in channel_order sequence, before overview row
+        # overview row is the second-to-last item (before status_label)
+        overview_index = self.plot_layout.count() - 2
+        for pos, ch in enumerate(self.channel_order):
+            if ch not in self.solo_channels:
+                continue
+            pw = pg.PlotWidget()
+            pw.setMouseEnabled(x=True, y=False)
+            pw.hideButtons()
+            pw.showGrid(x=True, y=True, alpha=0.3)
+            pw.setLabel('left', f'通道{ch+1}')
+            if self.bg_color:
+                pw.setBackground(self.bg_color)
+            curve = pw.plot(pen=pg.mkPen(color=self.default_colors[ch], width=1))
+            self.solo_plot_widgets[ch] = pw
+            self.solo_curves_map[ch] = curve
+            pw.getViewBox().sigRangeChangedManually.connect(self.pc.on_manual_pan_zoom)
+            pw.sigXRangeChanged.connect(self.pc.on_solo_plot_changed)
+            self.pc._hook_viewbox(pw.getViewBox())
+            self.plot_layout.insertWidget(overview_index, pw, stretch=1)
+            overview_index += 1
+
+        self.pc.solo_plot_widgets = self.solo_plot_widgets
+        self.pc.solo_curves = self.solo_curves_map
 
     def _open_filter_dialog(self):
         dlg = QtWidgets.QDialog(self)
@@ -520,39 +725,8 @@ class WavePlotter(QtWidgets.QWidget):
         self.pc.threshold_low = float(low_spin.value())
         self.pc.threshold_high = float(high_spin.value())
         self.pc._last_render_len = -1  # force redraw
-        self.filtered_plot.setVisible(self.pc.threshold_enabled)
+        self.filtered_plot.setVisible(self.pc.threshold_enabled and self.show_filter)
         self._update_status_label()
 
     def _open_guide_dialog(self):
-        dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("使用指南 — 滤波与绘图说明")
-        dlg.setMinimumSize(640, 420)
-        v = QtWidgets.QVBoxLayout(dlg)
-        text = QtWidgets.QTextEdit()
-        text.setReadOnly(True)
-        text.setHtml("""
-        <h2>使用指南（快速操作）</h2>
-        <p>本界面用于实时/回放查看 8 通道采集数据，并能对波形做简单的幅值阈值滤波、导出与管理。</p>
-        <h3>采集控制</h3>
-        <ul>
-            <li>点击 <strong>▶ 开始</strong> 开始实时采集，点击 <strong>■ 结束</strong> 停止并保存。</li>
-            <li>在记录列表点击 <em>查看</em> 可切换到回放模式。</li>
-            <li>点击 <em>滤波设置</em> 可启用阈值滤波：保留满足 <code>low ≤ |x| ≤ high</code> 的样点。</li>
-        </ul>
-        <h3>波形图说明</h3>
-        <ul>
-            <li>为保证流畅，程序对 overview 做下采样显示（不改变原始数据）。</li>
-            <li>鼠标左键拖动波形图可缩放区间；底部 overview 拖动黄色边框调整主图区间。</li>
-            <li>左侧通道复选框控制显示；颜色按钮可修改曲线颜色。</li>
-        </ul>
-        <h3>导出与清理</h3>
-        <ul>
-            <li>导出时可选 <strong>导出原始</strong> 或 <strong>导出滤波结果</strong>（需先启用滤波）。</li>
-            <li>"清除" 删除所有记录并释放内存，操作需确认。</li>
-        </ul>
-        """)
-        v.addWidget(text)
-        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok)
-        btns.accepted.connect(dlg.accept)
-        v.addWidget(btns)
-        dlg.exec()
+        pass  # guide is now in the 使用指南 tab of 默认设置

@@ -53,6 +53,10 @@ class PlotController:
         self.threshold_low = 0.0
         self.threshold_high = 0.0
 
+        # Solo channel plots (set by WavePlotter._rebuild_solo_plots)
+        self.solo_plot_widgets: dict = {}   # ch_idx -> PlotWidget
+        self.solo_curves: dict = {}         # ch_idx -> PlotCurveItem
+
         # Inertia state
         self._inertia_velocity = 0.0
         self._inertia_timer = QtCore.QTimer()
@@ -70,33 +74,32 @@ class PlotController:
 
     def _install_pan_handler(self):
         """Hook into ViewBox mouse events on both plots to track drag velocity."""
+        self._hook_viewbox(self.plot_widget.getViewBox())
+        self._hook_viewbox(self.filtered_plot.getViewBox())
+
+    def _hook_viewbox(self, vb):
         ctrl = self
+        orig_press   = vb.mousePressEvent
+        orig_release = vb.mouseReleaseEvent
 
-        def _hook(vb):
-            orig_press   = vb.mousePressEvent
-            orig_release = vb.mouseReleaseEvent
+        def on_press(ev):
+            if ev.button() == QtCore.Qt.MouseButton.LeftButton:
+                ctrl._inertia_timer.stop()
+                ctrl._inertia_velocity = 0.0
+                ctrl._drag_last_x = vb.mapSceneToView(ev.scenePos()).x()
+                ctrl._drag_last_t = time.perf_counter()
+                ctrl._drag_active = True
+            orig_press(ev)
 
-            def on_press(ev):
-                if ev.button() == QtCore.Qt.MouseButton.LeftButton:
-                    ctrl._inertia_timer.stop()
-                    ctrl._inertia_velocity = 0.0
-                    ctrl._drag_last_x = vb.mapSceneToView(ev.scenePos()).x()
-                    ctrl._drag_last_t = time.perf_counter()
-                    ctrl._drag_active = True
-                orig_press(ev)
+        def on_release(ev):
+            if ev.button() == QtCore.Qt.MouseButton.LeftButton and ctrl._drag_active:
+                ctrl._drag_active = False
+                if abs(ctrl._inertia_velocity) > INERTIA_STOP_VEL:
+                    ctrl._inertia_timer.start()
+            orig_release(ev)
 
-            def on_release(ev):
-                if ev.button() == QtCore.Qt.MouseButton.LeftButton and ctrl._drag_active:
-                    ctrl._drag_active = False
-                    if abs(ctrl._inertia_velocity) > INERTIA_STOP_VEL:
-                        ctrl._inertia_timer.start()
-                orig_release(ev)
-
-            vb.mousePressEvent = on_press
-            vb.mouseReleaseEvent = on_release
-
-        _hook(self.plot_widget.getViewBox())
-        _hook(self.filtered_plot.getViewBox())
+        vb.mousePressEvent = on_press
+        vb.mouseReleaseEvent = on_release
 
     def _inertia_tick(self):
         """Called by inertia timer. Apply velocity then decelerate."""
@@ -175,6 +178,8 @@ class PlotController:
             self.plot_widget.setXRange(minX, maxX, padding=0)
             self.filtered_plot.setXRange(minX, maxX, padding=0)
             self.region.setRegion([minX, maxX])
+            for pw in self.solo_plot_widgets.values():
+                pw.setXRange(minX, maxX, padding=0)
         finally:
             self._suppress_sync = False
         self._redraw_main(self._snapshots, minX, maxX)
@@ -204,6 +209,13 @@ class PlotController:
             else:
                 self.filtered_curves[ch].clear()
 
+        for ch, curve in self.solo_curves.items():
+            if self.checkboxes[ch].isChecked():
+                seg = snapshots[ch][i0:i1:rate]
+                curve.setData(xs, seg)
+            else:
+                curve.clear()
+
     def _redraw_overview(self, snapshots: list, cur_len: int):
         rate = max(1, cur_len // MAX_OV_PTS)
         x_ds = np.arange(0, cur_len, rate)
@@ -215,6 +227,8 @@ class PlotController:
             self.curves[ch].clear()
             self.overview_curves[ch].clear()
             self.filtered_curves[ch].clear()
+        for curve in self.solo_curves.values():
+            curve.clear()
 
     # ------------------------------------------------------------------ #
     # View change callbacks                                                 #
@@ -290,7 +304,43 @@ class PlotController:
                     minX = max(0.0, float(total) - span)
         self._set_view(minX, maxX)
 
-    def _on_view_changed(self, minX: float, maxX: float):
+    def on_solo_plot_changed(self, pw=None, _range=None):
+        if self._suppress_sync:
+            return
+        # find the first solo plot that has a valid view range
+        try:
+            if pw is not None and hasattr(pw, 'getViewBox'):
+                minX, maxX = pw.getViewBox().viewRange()[0]
+            else:
+                for p in self.solo_plot_widgets.values():
+                    minX, maxX = p.getViewBox().viewRange()[0]
+                    break
+                else:
+                    return
+        except Exception:
+            return
+
+        if self._drag_active:
+            cur_t = time.perf_counter()
+            cur_mid = (minX + maxX) / 2.0
+            if self._drag_last_x is not None and self._drag_last_t is not None:
+                dt = cur_t - self._drag_last_t
+                if dt > 0:
+                    self._inertia_velocity = (self._drag_last_x - cur_mid) / dt
+            self._drag_last_x = cur_mid
+            self._drag_last_t = cur_t
+
+        total = self._cur_data_len
+        if total > 0:
+            span = maxX - minX
+            minX = max(0.0, minX)
+            maxX = min(float(total), maxX)
+            if maxX - minX < span * 0.99:
+                if minX == 0.0:
+                    maxX = min(float(total), span)
+                else:
+                    minX = max(0.0, float(total) - span)
+        self._set_view(minX, maxX)
         if (minX, maxX) == self._last_view_range:
             return
         self._set_view(minX, maxX)
